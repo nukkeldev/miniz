@@ -323,7 +323,7 @@ pub fn build(b: *std.Build) void {
         //     DEPENDS "${ZIP_OUT_FN}"
         //     )
     } else {
-        @panic("TODO: Non-amalgamated");
+        std.log.err("TODO: Non-amalgamated", .{});
 
         //   include(GenerateExportHeader)
         //   set(miniz_SOURCE miniz.c miniz_zip.c miniz_tinfl.c miniz_tdef.c)
@@ -442,6 +442,14 @@ pub fn build(b: *std.Build) void {
     if (install_project) {
         _ = b.addInstallHeaderFile(lupstream.path(b, "miniz.h"), "headers");
     }
+
+    // Create an unpack step to view the source code we are using.
+    const unpack = b.step("unpack", "Installs the unpacked source");
+    unpack.dependOn(&b.addInstallDirectory(.{
+        .source_dir = upstream,
+        .install_dir = .{ .custom = "src" },
+        .install_subdir = "",
+    }).step);
 }
 
 // Version
@@ -457,6 +465,64 @@ fn getVersion(allocator: std.mem.Allocator) std.SemanticVersion {
         return std.SemanticVersion.parse(version) catch unreachable;
     };
     unreachable;
+}
+
+// Amalgamation
+
+pub fn amalgamate(
+    b: *std.Build,
+    files: []const std.Build.LazyPath,
+    output_path: std.Build.LazyPath,
+    remove_includes_for: []const []const u8,
+) !void {
+    var output = std.ArrayList(u8).init(b.allocator);
+    defer output.deinit();
+
+    // Split each file by line and add the line if it is not an include.
+    for (files) |lazy_path| {
+        const path = lazy_path.getPath3(b, null);
+        const file = try path.root_dir.handle.openFile(path.sub_path, .{});
+
+        const contents = try file.readToEndAlloc(b.allocator, std.math.maxInt(usize));
+        defer b.allocator.free(contents);
+
+        const start = try std.fmt.allocPrint(b.allocator, "\n// -- [START] Embed: \"{s}\" -- //\n\n", .{path.basename()});
+        defer b.allocator.free(start);
+
+        const end = try std.fmt.allocPrint(b.allocator, "\n// -- [END] Embed: \"{s}\" -- //\n\n", .{path.basename()});
+        defer b.allocator.free(end);
+
+        try output.ensureUnusedCapacity(contents.len + start.len + end.len);
+
+        output.appendSliceAssumeCapacity(start);
+
+        var lines = std.mem.splitScalar(u8, contents, '\n');
+        outer: while (lines.next()) |line| {
+            const trimmed_line = std.mem.trim(u8, line, &std.ascii.whitespace);
+            if (std.mem.startsWith(u8, trimmed_line, "#include \"") and
+                trimmed_line[trimmed_line.len - 1] == '"')
+            {
+                const include = trimmed_line[("#include \"".len)..(trimmed_line.len - 1)];
+                for (remove_includes_for) |remove| if (std.mem.eql(u8, remove, include)) {
+                    continue :outer;
+                };
+            }
+            output.appendSliceAssumeCapacity(trimmed_line);
+            output.appendAssumeCapacity('\n');
+        }
+
+        output.appendSliceAssumeCapacity(end);
+    }
+
+    // Write the output to file.
+    const path = output_path.getPath3(b, null);
+    const file = try path.root_dir.handle.createFile(path.sub_path, .{});
+    const bytes = try file.write(output.items);
+
+    if (bytes != output.items.len) {
+        std.log.err("Failed to write the output to file properly.", .{});
+        return error.FailedToWriteFile;
+    }
 }
 
 // Custom Steps
