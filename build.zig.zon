@@ -1,0 +1,17 @@
+.{
+    .name = .miniz,
+    .version = "3.1.0",
+    .fingerprint = 0xa708528e59394af2, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.14.1",
+    .dependencies = .{
+        .upstream = .{
+            .url = "git+https://github.com/richgel999/miniz#c883286f1a6443720e7705450f59e579a4bbb8e2",
+            .hash = "N-V-__8AAINZFgB-AsYGrEPUAvCn1wwi-Tjyy8UNjHH3q33V",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE",
+    },
+}
