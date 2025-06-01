@@ -3,6 +3,8 @@ const std = @import("std");
 const usage =
     \\Usage: ./amalgamate [options]
     \\
+    \\Amalgamtes C/C++ header and source files together, removing includes.
+    \\
     \\Options [*=required]:
     \\* -h, --headers: Indicates the following arguments are paths to header files.
     \\* -s, --sources: Indicates the following arguments are paths to source files.
@@ -15,6 +17,7 @@ const usage =
     \\Notes:
     \\  If a path is surrounded in double-quotes, it is interpreted as a string to
     \\  be amalgamated.
+    \\
 ;
 
 pub fn main() void {
