@@ -91,13 +91,22 @@ pub fn main() void {
 
     // Amalgamate the files.
 
-    const amal_header_contents = amalgamate(allocator, header_contents.items, includes_to_remove.items);
-    const amal_source_contents = amalgamate(allocator, source_contents.items, includes_to_remove.items);
+    const amal_header_contents: []const u8, const amal_source_contents: []const u8 = outer: {
+        if (header_only) {
+            header_contents.appendSlice(source_contents.items) catch fatal("OOM", .{});
+            break :outer .{ amalgamate(allocator, header_contents.items, includes_to_remove.items), undefined };
+        } else {
+            break :outer .{
+                amalgamate(allocator, header_contents.items, includes_to_remove.items),
+                amalgamate(allocator, source_contents.items, includes_to_remove.items),
+            };
+        }
+    };
 
     // Write to the output files.
 
-    writeToOutput(header_output, amal_header_contents, "header");
-    writeToOutput(source_output, amal_source_contents, "source");
+    if (header_contents.items.len != 0) writeToOutput(header_output, amal_header_contents, "header");
+    if (!header_only and source_contents.items.len != 0) writeToOutput(source_output, amal_source_contents, "source");
 
     return std.process.cleanExit();
 }

@@ -26,18 +26,22 @@
 //!   Commands" section below.
 //! - System commands **MUST** use the long version of arguments when available.
 //!
-//! Required System Commands:
-//! - `cat`
-//!
 //! This script is MIT licensed, see [LICENSE] for the full text.
 
 const std = @import("std");
 
 const Step = std.Build.Step;
 
-pub fn build(b: *std.Build) void {
+var target: std.Build.ResolvedTarget = undefined;
+
+var upstream: std.Build.LazyPath = undefined;
+var lupstream: std.Build.LazyPath = undefined;
+
+// TODO: Remove `try`s for panics.
+pub fn build(b: *std.Build) !void {
     // Get the upstream's file tree.
-    const upstream = b.dependency("upstream", .{}).path("");
+    upstream = b.dependency("upstream", .{}).path(".");
+    if (b.verbose) std.log.info("Upstream Path: {}", .{upstream.dependency.dependency.builder.build_root});
 
     // [up1] Get the `miniz` version. (lines 27-31)
     //
@@ -54,7 +58,7 @@ pub fn build(b: *std.Build) void {
     std.log.info("Building `miniz` version {}!", .{miniz_version});
 
     // Get the build target.
-    const target = b.standardTargetOptions(.{});
+    target = b.standardTargetOptions(.{});
 
     // [up1] Get the optimization mode (BUILD_TYPE). (lines 33-39)
     //
@@ -130,23 +134,18 @@ pub fn build(b: *std.Build) void {
     // Create a locally cached copy of the project before we start generating
     // files.
 
-    const wf_lupstream = b.addWriteFiles();
-    wf_lupstream.step.name = "copy upstream";
-    const lupstream = wf_lupstream.addCopyDirectory(upstream, "", .{});
-    if (b.verbose) _ = LogWriteFilesStep.init(b, wf_lupstream);
+    const wf_lupstream_step = outer: {
+        const step = b.addWriteFiles();
+        step.step.name = "copy upstream";
+        lupstream = step.addCopyDirectory(upstream, "", .{});
+        break :outer if (b.verbose) &LogWriteFilesStep.init(b, step).step else &step.step;
+    };
 
     // [up1] amalgamate /ə-măl′gə-māt″/: intransitive verb
     //         To combine into a unified or integrated whole; unite.
     // (lines 61-167)
 
     if (amalgamate_sources) {
-        // Create a meta-step for amalgamation.
-        const amalgamation_step = b.step(
-            "amalgamate",
-            "Amalgamates the source code into a `miniz.c`/`miniz.h` pair",
-        );
-        b.getInstallStep().dependOn(amalgamation_step);
-
         // [up2] Create the amalgamation folder. (line 5)
         //
         // mkdir -p amalgamation
@@ -187,43 +186,34 @@ pub fn build(b: *std.Build) void {
         //   endforeach()
         //   string(CONCAT AMAL_MINIZ_H "#ifndef MINIZ_EXPORT\n#define MINIZ_EXPORT\n#endif\n" "${AMAL_MINIZ_H}")
         //
-        // TODO: Replace `cat` with a custom step.
-        //
         // `Step.WriteFile` makes intermediate directories so we don't need to
         // create `amalgamation/` nor copy `miniz.h`.
 
-        // Con_cat_ all of the header files and templates.
-        const @"cat *.h" = b.addSystemCommand(&.{"cat"});
-        @"cat *.h".addFileArg(b.path("miniz.1.h.in")); // This is beautiful.
-        @"cat *.h".addArgs(&.{ "miniz.h", "miniz_common.h", "miniz_tdef.h", "miniz_tinfl.h", "miniz_zip.h" });
-        @"cat *.h".setCwd(upstream);
-        @"cat *.h".setName("amalgamate miniz.h");
-        // Remove the broken includes for the unamalagated headers from miniz.h.
-        const miniz_h_remove_includes = RemoveIncludesStep.init(b, "miniz.h", @"cat *.h".captureStdOut());
-        // Link steps together.
-        miniz_h_remove_includes.step.dependOn(&@"cat *.h".step);
-        wf_lupstream.step.dependOn(&miniz_h_remove_includes.step);
-        amalgamation_step.dependOn(&miniz_h_remove_includes.step);
-
-        // Con_cat_ all of the source files.
-        const @"cat *.c" = b.addSystemCommand(&.{
-            "cat",
-        });
-        @"cat *.h".addFileArg(b.path("miniz.c.in")); // This is more beautiful.
-        @"cat *.c".addArgs(&.{
-            "miniz.c",
-            "miniz_tdef.c",
-            "miniz_tinfl.c",
-            "miniz_zip.c",
-        });
-        @"cat *.c".setCwd(upstream);
-        @"cat *.c".setName("amalgamate miniz.c");
-        // Remove the broken includes for the unamalagated headers from miniz.c.
-        const miniz_c_remove_includes = RemoveIncludesStep.init(b, "miniz.c", @"cat *.c".captureStdOut());
-        // Link steps together.
-        miniz_c_remove_includes.step.dependOn(&@"cat *.c".step);
-        wf_lupstream.step.dependOn(&miniz_c_remove_includes.step);
-        amalgamation_step.dependOn(&miniz_c_remove_includes.step);
+        const amalgamate_step = amalgamate(
+            b,
+            &.{
+                .{ .string = "#ifndef MINIZ_EXPORT\n#define MINIZ_EXPORT\n#endif\n" },
+                .{ .lazy_path = upstream.path(b, "miniz.h") },
+                .{ .lazy_path = upstream.path(b, "miniz_common.h") },
+                .{ .lazy_path = upstream.path(b, "miniz_tdef.h") },
+                .{ .lazy_path = upstream.path(b, "miniz_tinfl.h") },
+                .{ .lazy_path = upstream.path(b, "miniz_zip.h") },
+            },
+            &.{
+                .{ .string = if (build_header_only) "\n#ifndef MINIZ_HEADER_FILE_ONLY\n" else "" },
+                .{ .lazy_path = upstream.path(b, "miniz.c") },
+                .{ .lazy_path = upstream.path(b, "miniz_tdef.c") },
+                .{ .lazy_path = upstream.path(b, "miniz_tinfl.c") },
+                .{ .lazy_path = upstream.path(b, "miniz_zip.c") },
+                .{ .string = if (build_header_only) "\n#endif // MINIZ_HEADER_FILE_ONLY\n" else "" },
+            },
+            &.{
+                "miniz_export.h",
+            },
+            build_header_only,
+        );
+        amalgamate_step.dependOn(wf_lupstream_step);
+        b.getInstallStep().dependOn(amalgamate_step);
 
         // Create our library.
 
@@ -233,7 +223,7 @@ pub fn build(b: *std.Build) void {
             .version = miniz_version,
             .linkage = linkage,
         });
-        lib.addIncludePath(lupstream.path(b, "amalgamation"));
+        // lib.addIncludePath(lupstream.path(b, "amalgamation"));
         if (install_project) b.installArtifact(lib);
 
         if (build_header_only) {
@@ -244,20 +234,22 @@ pub fn build(b: *std.Build) void {
             //            "${AMAL_MINIZ_C}" "\n#endif // MINIZ_HEADER_FILE_ONLY\n")
             //
 
-            @"cat *.h".addFileArg(b.path("miniz.2.h.in"));
-            @"cat *.h".addFileArg(@"cat *.c".captureStdOut());
-            @"cat *.h".addFileArg(b.path("miniz.3.h.in"));
-
-            @"cat *.h".step.dependOn(&@"cat *.c".step);
+            // const amalgamate_header_only = try b.allocator.create(std.Build.Step);
+            // amalgamate_header_only.* = .init(.{
+            //     .id = .write_file,
+            //     .name = "amalgamate header only",
+            //     .owner = b,
+            //     .makeFn = amalgamateHeaderOnly,
+            // });
+            // amalgamate_header_only.dependOn(add_header_guard);
+            // amalgamate_header_only.dependOn(&amalgamate_source.step);
+            // amalgamation_step.dependOn(amalgamate_header_only);
 
             // [up1] Copy miniz.h to lupstream. (line 88)
             //
             //    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/miniz.h "${AMAL_MINIZ_H}")
             //
-
-            _ = wf_lupstream.addCopyFile(@"cat *.h".captureStdOut(), "amalgamation/miniz.h");
-            // [up1] (line 199)
-            _ = wf_lupstream.addCopyFile(@"cat *.h".captureStdOut(), "amalgamation/miniz/miniz.h");
+            // Extracted below.
 
             // [up1] Create our header-only library target. (line 89,97-101)
             //
@@ -277,10 +269,15 @@ pub fn build(b: *std.Build) void {
             //     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/miniz.c "${AMAL_MINIZ_C}")
             //
 
-            _ = wf_lupstream.addCopyFile(@"cat *.h".captureStdOut(), "amalgamation/miniz.h");
-            // [up1] (line 199)
-            _ = wf_lupstream.addCopyFile(@"cat *.h".captureStdOut(), "amalgamation/miniz/miniz.h");
-            _ = wf_lupstream.addCopyFile(@"cat *.c".captureStdOut(), "amalgamation/miniz.c");
+            // const copy_source = try b.allocator.create(std.Build.Step);
+            // copy_source.* = .init(.{
+            //     .id = .write_file,
+            //     .name = "copy source",
+            //     .owner = b,
+            //     .makeFn = copySource,
+            // });
+            // copy_source.dependOn(&amalgamate_source.step);
+            // amalgamation_step.dependOn(copy_source);
 
             // [up1] Create our library target. (line 108-112)
             //
@@ -292,8 +289,18 @@ pub fn build(b: *std.Build) void {
             //
             // Common with branches, extracted above.
 
-            lib.addCSourceFile(.{ .file = lupstream.path(b, "amalgamation/miniz.c") });
+            // lib.addCSourceFile(.{ .file = lupstream.path(b, "amalgamation/miniz.c") });
         }
+
+        // const copy_header = try b.allocator.create(std.Build.Step);
+        // copy_header.* = .init(.{
+        //     .id = .write_file,
+        //     .name = "copy header",
+        //     .owner = b,
+        //     .makeFn = copyHeader,
+        // });
+        // copy_header.dependOn(&amalgamate_header.step);
+        // amalgamation_step.dependOn(copy_header);
 
         //
         // set(INSTALL_HEADERS ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/miniz.h)
@@ -467,117 +474,53 @@ fn getVersion(allocator: std.mem.Allocator) std.SemanticVersion {
     unreachable;
 }
 
-// Amalgamation
+// Tools
 
-pub fn amalgamate(
-    b: *std.Build,
-    files: []const std.Build.LazyPath,
-    output_path: std.Build.LazyPath,
-    remove_includes_for: []const []const u8,
-) !void {
-    var output = std.ArrayList(u8).init(b.allocator);
-    defer output.deinit();
-
-    // Split each file by line and add the line if it is not an include.
-    for (files) |lazy_path| {
-        const path = lazy_path.getPath3(b, null);
-        const file = try path.root_dir.handle.openFile(path.sub_path, .{});
-
-        const contents = try file.readToEndAlloc(b.allocator, std.math.maxInt(usize));
-        defer b.allocator.free(contents);
-
-        const start = try std.fmt.allocPrint(b.allocator, "\n// -- [START] Embed: \"{s}\" -- //\n\n", .{path.basename()});
-        defer b.allocator.free(start);
-
-        const end = try std.fmt.allocPrint(b.allocator, "\n// -- [END] Embed: \"{s}\" -- //\n\n", .{path.basename()});
-        defer b.allocator.free(end);
-
-        try output.ensureUnusedCapacity(contents.len + start.len + end.len);
-
-        output.appendSliceAssumeCapacity(start);
-
-        var lines = std.mem.splitScalar(u8, contents, '\n');
-        outer: while (lines.next()) |line| {
-            const trimmed_line = std.mem.trim(u8, line, &std.ascii.whitespace);
-            if (std.mem.startsWith(u8, trimmed_line, "#include \"") and
-                trimmed_line[trimmed_line.len - 1] == '"')
-            {
-                const include = trimmed_line[("#include \"".len)..(trimmed_line.len - 1)];
-                for (remove_includes_for) |remove| if (std.mem.eql(u8, remove, include)) {
-                    continue :outer;
-                };
-            }
-            output.appendSliceAssumeCapacity(trimmed_line);
-            output.appendAssumeCapacity('\n');
-        }
-
-        output.appendSliceAssumeCapacity(end);
-    }
-
-    // Write the output to file.
-    const path = output_path.getPath3(b, null);
-    const file = try path.root_dir.handle.createFile(path.sub_path, .{});
-    const bytes = try file.write(output.items);
-
-    if (bytes != output.items.len) {
-        std.log.err("Failed to write the output to file properly.", .{});
-        return error.FailedToWriteFile;
-    }
-}
-
-// Custom Steps
-
-const RemoveIncludesStep = struct {
-    step: Step,
-    file: std.Build.LazyPath,
-
-    pub fn init(b: *std.Build, name: []const u8, file: std.Build.LazyPath) *@This() {
-        const step = b.allocator.create(@This()) catch @panic("OOM");
-        step.step = std.Build.Step.init(.{
-            .name = b.fmt("remove includes in {s}", .{name}),
-            .id = .custom,
-            .makeFn = makeFn,
-            .owner = b,
-        });
-        step.file = file;
-
-        b.getInstallStep().dependOn(&step.step);
-        return step;
-    }
-
-    fn makeFn(step: *Step, _: Step.MakeOptions) anyerror!void {
-        const ri: *@This() = @fieldParentPtr("step", step);
-        const lazy_path = ri.file;
-        const path = lazy_path.getPath3(step.owner, step);
-
-        std.debug.print("[debug] Replacing includes in \"{}\".\n", .{path});
-
-        const file = try path.root_dir.handle.openFile(path.sub_path, .{ .mode = .read_write });
-        defer file.close();
-        const contents = try file.readToEndAlloc(step.owner.allocator, std.math.maxInt(usize));
-        const out = try step.owner.allocator.alloc(u8, contents.len);
-        var byte: usize = 0;
-        var lines = std.mem.splitScalar(u8, contents, '\n');
-
-        while (lines.next()) |line| {
-            const start = if (std.mem.startsWith(u8, line, "#include \""))
-                (std.mem.indexOfScalarPos(u8, line, 10, '"') orelse 0) + 1
-            else
-                0;
-            const end = line.len;
-            for (line[start..end]) |char| {
-                out[byte] = char;
-                byte += 1;
-            }
-            out[byte] = '\n';
-            byte += 1;
-        }
-
-        if (try file.write(out[0..byte]) != byte) {
-            @panic("Failed to write the output of include replacement!");
-        }
-    }
+const LazyPathOrString = union(enum) {
+    lazy_path: std.Build.LazyPath,
+    string: []const u8,
 };
+
+fn amalgamate(
+    b: *std.Build,
+    headers: []const LazyPathOrString,
+    sources: []const LazyPathOrString,
+    additional_includes: []const []const u8,
+    header_only: bool,
+) *Step {
+    const mod = b.createModule(.{
+        .target = target,
+        .optimize = .ReleaseFast,
+        .root_source_file = b.path("tools/amalgamate.zig"),
+    });
+    const exe = b.addExecutable(.{ .name = "amalgamate", .root_module = mod });
+
+    const run = b.addRunArtifact(exe);
+    if (header_only) run.addArg("--header-only");
+
+    run.addArg("--headers");
+    for (headers) |item| switch (item) {
+        .lazy_path => |lp| run.addFileArg(lp),
+        .string => |s| run.addArg(b.fmt("\"{s}\"", .{s})),
+    };
+
+    run.addArg("--sources");
+    for (sources) |item| switch (item) {
+        .lazy_path => |lp| run.addFileArg(lp),
+        .string => |s| run.addArg(b.fmt("\"{s}\"", .{s})),
+    };
+
+    run.addArg("--additionally");
+    run.addArgs(additional_includes);
+
+    run.addArg("--header-output");
+    run.addFileArg(b.path(".zig-cache/generated/miniz/miniz.h"));
+
+    run.addArg("--source-output");
+    run.addFileArg(b.path(".zig-cache/generated/miniz/miniz.c"));
+
+    return &run.step;
+}
 
 // Build-Time Logging
 
@@ -596,8 +539,6 @@ const LogWriteFilesStep = struct {
         step.write_files = write_files;
 
         step.step.dependOn(&write_files.step);
-        b.getInstallStep().dependOn(&step.step);
-
         return step;
     }
 
