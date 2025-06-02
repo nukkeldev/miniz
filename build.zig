@@ -1,32 +1,11 @@
 //! Copyright (c) 2025 nukkeldev
 //!
-//! AYC Faithful Recreation (FR): `miniz`
-//! FR = When possible, all previous functionality is made available to the
-//!      user. This does not prevent additional features being added nor bugs
-//!      being fixed.
+//! CHANGES:
+//! - `-DINSTALL_PROJECT` was removed.
+//! - `-Dlinkage` is prefered to `-DBUILD_SHARED_LIBS`.
+//! -  The sources are not currently zipped with the build.
 //!
-//! Faithfully recreated from the applicable portions of `CMakeLists.txt`
-//! (source 1) and `amalgamate.sh` (source 2). Portions not relevent are not
-//! included below, but those that are relevant have their lines commented
-//! _above_ the corresponding zig code prefixed with "[up#]" where "#" is the
-//! source's number.
-//!
-//! Styling Guide:
-//! - All comments **MUST** not exceed 80 columns UNLESS it is an included
-//!   portion of a source.
-//! - All lines-of-code **MUST** not exceed 120 columns.
-//! - Comments without whitespace below them refer **ONLY** to the subsequent
-//!   line, whereas those that have a whitespace below them refer to the
-//!   subsequent section of lines.
-//! - Any differences from the original build script **MUST** be noted with
-//!   "NOTE: ..." comments.
-//! - Comments that include portions of a source **MUST** seperate the portion
-//!   with **AT LEAST ONE EMPTY** comment line above and below.
-//! - **ALL** used system commands **MUST** be listed in the "Required System
-//!   Commands" section below.
-//! - System commands **MUST** use the long version of arguments when available.
-//!
-//! This script is MIT licensed, see [LICENSE] for the full text.
+//! This script is MIT licensed; see [LICENSE] for the full text.
 
 const std = @import("std");
 
@@ -34,68 +13,24 @@ const Step = std.Build.Step;
 const LP = std.Build.LazyPath;
 
 var target: std.Build.ResolvedTarget = undefined;
-var upstream: LP = undefined;
 
-// TODO: Remove `try`s for panics.
-pub fn build(b: *std.Build) !void {
+pub fn build(b: *std.Build) void {
     // Get the upstream's file tree.
-    upstream = b.dependency("upstream", .{}).path(".");
+    const upstream = b.dependency("upstream", .{}).path(".");
     if (b.verbose) std.log.info("Upstream Path: {}", .{upstream.dependency.dependency.builder.build_root});
 
-    // [up1] Get the `miniz` version. (lines 27-31)
-    //
-    // set(MINIZ_API_VERSION 3)
-    // set(MINIZ_MINOR_VERSION 0)
-    // set(MINIZ_PATCH_VERSION 2)
-    // set(MINIZ_VERSION
-    //     ${MINIZ_API_VERSION}.${MINIZ_MINOR_VERSION}.${MINIZ_PATCH_VERSION})
-    //
-    // NOTE: Rather than being set in the script itself, the version is pulled
-    // NOTE: from `build.zig.zon`.
-
+    // Get the version from the `build.zig.zon`.
     const miniz_version = getVersion(b.allocator);
-    std.log.info("Building `miniz` version {}!", .{miniz_version});
+    std.log.info("Configuring build for `miniz` version {}!", .{miniz_version});
 
-    // Get the build target.
+    // Get the standard build options.
     target = b.standardTargetOptions(.{});
-
-    // [up1] Get the optimization mode (BUILD_TYPE). (lines 33-39)
-    //
-    // if(CMAKE_BUILD_TYPE STREQUAL "")
-    //   # CMake defaults to leaving CMAKE_BUILD_TYPE empty. This screws up
-    //   # differentiation between debug and release builds.
-    //   set(CMAKE_BUILD_TYPE "Release" CACHE STRING
-    //     "Choose the type of build, options are: None (CMAKE_CXX_FLAGS or \
-    // CMAKE_C_FLAGS used) Debug Release RelWithDebInfo MinSizeRel." FORCE)
-    // endif ()
-    //
-    // NOTE: [up1] (lines 20-24)
-    // NOTE: Define the compliation flags for CMake's  `None` target to which we
-    // NOTE: don't have an equivalent.
 
     // Set the default optimization mode to `.ReleaseFast` instead of `.Debug`.
     b.release_mode = .fast;
     const optimize = b.standardOptimizeOption(.{});
 
-    // Create our module.
-    const mod = b.addModule("miniz", .{
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-
-    // [up1] Get `miniz`'s options. (lines 41-48)
-    //
-    // option(BUILD_EXAMPLES "Build examples" ${MINIZ_STANDALONE_PROJECT})
-    // option(BUILD_FUZZERS "Build fuzz targets" OFF)
-    // option(AMALGAMATE_SOURCES "Amalgamate sources into miniz.h/c" OFF)
-    // option(BUILD_HEADER_ONLY "Build a header-only version" OFF)
-    // option(BUILD_SHARED_LIBS "Build shared library instead of static" OFF)
-    // option(BUILD_NO_STDIO" Build a without stdio version" OFF)
-    // option(BUILD_TESTS "Build tests" ${MINIZ_STANDALONE_PROJECT})
-    // option(INSTALL_PROJECT "Install project" ${MINIZ_STANDALONE_PROJECT})
-    //
-    // NOTE: `INSTALL_PROJECT` was removed.
+    // Get miniz's options.
 
     // const build_examples = b.option(bool, "BUILD_EXAMPLES", "Build examples") orelse false;
     // const build_fuzzers = b.option(bool, "BUILD_FUZZERS", "Build fuzz targets") orelse false;
@@ -121,64 +56,26 @@ pub fn build(b: *std.Build) !void {
     const build_no_stdio = b.option(bool, "BUILD_NO_STDIO", "Build a without stdio version") orelse false;
     // const build_tests = b.option(bool, "BUILD_TESTS", "Build tests") orelse false;
 
-    // [up1] Ensure the proper `miniz` option dependencies are set.
-    // (lines 56-58)
-    //
-    // if(BUILD_HEADER_ONLY)
-    //   set(AMALGAMATE_SOURCES ON CACHE BOOL "Build a header-only version" FORCE)
-    // endif(BUILD_HEADER_ONLY)
-    //
-
+    // Make sure to amalgamate sources if we are only building a header.
     if (build_header_only) amalgamate_sources = true;
 
-    // [up1] amalgamate /ə-măl′gə-māt″/: intransitive verb
-    //         To combine into a unified or integrated whole; unite.
-    // (lines 61-167)
+    // Create the module and library.
+    const mod = b.addModule("miniz", .{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    const lib = b.addLibrary(.{
+        .name = "miniz",
+        .root_module = mod,
+        .version = miniz_version,
+        .linkage = linkage,
+    });
+    b.installArtifact(lib);
 
     if (amalgamate_sources) {
-        // [up2] Create the amalgamation folder. (line 5)
-        //
-        // mkdir -p amalgamation
-        //
-        // [up1] Copy `miniz.h` to the amalgamation folder. (line 62)
-        //
-        //   file(COPY miniz.h DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/)
-        //
-        // [up1] Amalgamate all the header files into `amalgamation/miniz.h`.
-        // (lines 63-69)
-        //
-        //   file(READ miniz.h MINIZ_H)
-        //   file(READ miniz_common.h MINIZ_COMMON_H)
-        //   file(READ miniz_tdef.h MINIZ_TDEF_H)
-        //   file(READ miniz_tinfl.h MINIZ_TINFL_H)
-        //   file(READ miniz_zip.h MINIZ_ZIP_H)
-        //   file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/miniz.h
-        //      "${MINIZ_COMMON_H} ${MINIZ_TDEF_H} ${MINIZ_TINFL_H} ${MINIZ_ZIP_H}")
-        //
-        // [up1] Amalgamate all the c files into `amalgamation/miniz.c`.
-        // (lines 71-76)
-        //
-        //   file(COPY miniz.c DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/)
-        //   file(READ miniz_tdef.c MINIZ_TDEF_C)
-        //   file(READ miniz_tinfl.c MINIZ_TINFL_C)
-        //   file(READ miniz_zip.c MINIZ_ZIP_C)
-        //   file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/miniz.c
-        //      "${MINIZ_TDEF_C} ${MINIZ_TINFL_C} ${MINIZ_ZIP_C}")
-        //
-        // [up1] Remove includes from amalgamated files and add guard.
-        // (lines 78-84)
-        //
-        //   file(READ ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/miniz.h AMAL_MINIZ_H)
-        //   file(READ ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/miniz.c AMAL_MINIZ_C)
-        //   foreach(REPLACE_STRING miniz;miniz_common;miniz_tdef;miniz_tinfl;miniz_zip;miniz_export)
-        //     string(REPLACE "#include \"${REPLACE_STRING}.h\"" "" AMAL_MINIZ_H "${AMAL_MINIZ_H}")
-        //     string(REPLACE "#include \"${REPLACE_STRING}.h\"" "" AMAL_MINIZ_C "${AMAL_MINIZ_C}")
-        //   endforeach()
-        //   string(CONCAT AMAL_MINIZ_H "#ifndef MINIZ_EXPORT\n#define MINIZ_EXPORT\n#endif\n" "${AMAL_MINIZ_H}")
-        //
-        // `Step.WriteFile` makes intermediate directories so we don't need to
-        // create `amalgamation/` nor copy `miniz.h`.
-
+        // Amalgamate the source files into `miniz.c/h`.
         const amalgamated = amalgamate(
             b,
             &.{
@@ -203,171 +100,55 @@ pub fn build(b: *std.Build) !void {
             build_header_only,
         );
 
-        // Copy the files.
+        // Copy the files to `zig-out`.
+        const wf_copy = b.addWriteFiles();
+        lib.step.dependOn(&wf_copy.step);
+        const gen = wf_copy.addCopyFile(amalgamated.header_output, "amalgamation/miniz.h");
+        _ = wf_copy.addCopyFile(amalgamated.header_output, "miniz.h");
+        if (!build_header_only) {
+            const source = wf_copy.addCopyFile(amalgamated.source_output, "amalgamation/miniz.c");
+            lib.addCSourceFile(.{ .file = source });
+        }
 
-        const install_files_step = stepGroup(b, @as([]const ?*std.Build.Step.InstallFile, &.{
-            b.addInstallFile(amalgamated.header_output, "src/amalgamation/miniz.h"),
-            b.addInstallFile(amalgamated.header_output, "src/miniz.h"),
-            if (!build_header_only) b.addInstallFile(amalgamated.source_output, "src/amalgamation/miniz.c") else null,
-        }));
+        // Add include paths.
+        lib.addIncludePath(gen.dirname());
+        lib.installHeadersDirectory(gen.dirname(), "", .{ .include_extensions = &.{"h"} });
 
-        // Create our library.
-
-        const lib = b.addLibrary(.{
-            .name = "miniz",
-            .root_module = mod,
-            .version = miniz_version,
-            .linkage = linkage,
-        });
-        lib.step.dependOn(install_files_step);
-        lib.addIncludePath(b.path("zig-out/src"));
-        lib.installHeadersDirectory(b.path("zig-out/src/"), "include", .{ .exclude_extensions = &.{"c"} });
-        if (!build_header_only) lib.addCSourceFile(.{ .file = b.path("zig-out/src/amalgamation/miniz.c") });
-        b.installArtifact(lib);
-
-        //
-        // set(INSTALL_HEADERS ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/miniz.h)
-        //
-        // file(GLOB_RECURSE ZIP_FILES RELATIVE "${CMAKE_CURRENT_BINARY_DIR}/amalgamation" "${CMAKE_CURRENT_BINARY_DIR}/amalgamation/*")
-        // file(GLOB_RECURSE ZIP_FILES2 RELATIVE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/examples/*")
-        // list(APPEND ZIP_FILES ${ZIP_FILES2})
-        // list(APPEND ZIP_FILES "ChangeLog.md")
-        // list(APPEND ZIP_FILES "readme.md")
-        // list(APPEND ZIP_FILES "LICENSE")
-        // set(ZIP_OUT_FN "${CMAKE_CURRENT_BINARY_DIR}/miniz-${MINIZ_VERSION}.zip")
-        // message(STATUS "Zip files: ${ZIP_FILES}")
-        // add_custom_command(
-        //         COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/examples ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/examples
-        //         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/ChangeLog.md ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/ChangeLog.md
-        //         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/readme.md ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/readme.md
-        //         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/LICENSE ${CMAKE_CURRENT_BINARY_DIR}/amalgamation/LICENSE
-        //         COMMAND ${CMAKE_COMMAND} -E tar "cf" "${ZIP_OUT_FN}" --format=zip -- ${ZIP_FILES}
-        //         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/amalgamation"
-        //         OUTPUT  "${ZIP_OUT_FN}"
-        //         DEPENDS ${ZIP_FILES}
-        //         COMMENT "Zipping to ${CMAKE_CURRENT_BINARY_DIR}/miniz.zip."
-        //     )
-        //
-        //     add_custom_target(
-        //     create_zip ALL
-        //     DEPENDS "${ZIP_OUT_FN}"
-        //     )
+        // TODO: Add functionality to zip the source files.
     } else {
-        std.log.err("TODO: Non-amalgamated", .{});
+        // Create export file.
+        const wf_export = b.addWriteFiles();
+        const miniz_export = wf_export.add("miniz_export.h", MINIZ_EXPORT_H);
 
-        //   include(GenerateExportHeader)
-        //   set(miniz_SOURCE miniz.c miniz_zip.c miniz_tinfl.c miniz_tdef.c)
-        //   add_library(${PROJECT_NAME} ${miniz_SOURCE})
-        //   generate_export_header(${PROJECT_NAME})
-        //
-        //   if(NOT BUILD_SHARED_LIBS)
-        //     string(TOUPPER ${PROJECT_NAME} PROJECT_UPPER)
-        //     set_target_properties(${PROJECT_NAME}
-        //         PROPERTIES INTERFACE_COMPILE_DEFINITIONS ${PROJECT_UPPER}_STATIC_DEFINE)
-        //   else()
-        //     set_property(TARGET ${PROJECT_NAME} PROPERTY C_VISIBILITY_PRESET hidden)
-        //   endif()
-        //
-        //   set_property(TARGET ${PROJECT_NAME} PROPERTY VERSION ${MINIZ_VERSION})
-        //   set_property(TARGET ${PROJECT_NAME} PROPERTY SOVERSION ${MINIZ_API_VERSION})
-        //
-        //   target_include_directories(${PROJECT_NAME} PUBLIC
-        //     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-        //     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
-        //     $<INSTALL_INTERFACE:include>
-        //   )
-        //
-        //   file(GLOB INSTALL_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
-        //   list(APPEND
-        //        INSTALL_HEADERS ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}_export.h)
+        // Add source files.
+        lib.addCSourceFiles(.{
+            .root = upstream,
+            .files = &.{
+                "miniz.c",
+                "miniz_tdef.c",
+                "miniz_tinfl.c",
+                "miniz_zip.c",
+            },
+        });
+
+        // Add include paths.
+        lib.addIncludePath(upstream);
+        lib.addIncludePath(miniz_export.dirname());
+
+        lib.installHeader(upstream.path(b, "miniz.h"), "miniz.h");
+        lib.installHeader(upstream.path(b, "miniz_common.h"), "miniz_common.h");
+        lib.installHeader(upstream.path(b, "miniz_tdef.h"), "miniz_tdef.h");
+        lib.installHeader(upstream.path(b, "miniz_tinfl.h"), "miniz_tinfl.h");
+        lib.installHeader(upstream.path(b, "miniz_zip.h"), "miniz_zip.h");
+        lib.installHeader(miniz_export, "miniz_export.h");
     }
 
-    // if(NOT BUILD_HEADER_ONLY)
-    //   target_compile_definitions(${PROJECT_NAME}
-    //     PRIVATE $<$<C_COMPILER_ID:GNU>:_GNU_SOURCE>)
-    //
-    //   # pkg-config file
-    //   configure_file(miniz.pc.in ${CMAKE_CURRENT_BINARY_DIR}/miniz.pc @ONLY)
-    //
-    //   if(INSTALL_PROJECT)
-    //     install(FILES
-    //     ${CMAKE_CURRENT_BINARY_DIR}/miniz.pc
-    //     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
-    //   endif()
-    // endif()
-
-    if (!build_header_only) {
-        // const pkg_config_file = b.addConfigHeader(
-        //     .{ .style = .{ .cmake = upstream.path(b, "miniz.pc.in") } },
-        //     .{
-        //         .PROJECT_NAME = "miniz",
-        //         .PROJECT_DESCRIPTION = "Single C source file zlib-replacement library",
-        //         .MINIZ_VERSION = b.fmt("{}", .{miniz_version}),
-        //         .PROJECT_HOMEPAGE_URL = "https://github.com/richgel999/miniz",
-        //         .CMAKE_INSTALL_PREFIX = b.install_prefix,
-        //         .CMAKE_INSTALL_LIBDIR = b.lib_dir,
-        //         .CMAKE_INSTALL_INCLUDEDIR = b.h_dir,
-        //     },
-        // );
-        // b.getInstallStep().dependOn(&pkg_config_file.step);
-
-        // if (install_project) {
-        //     _ = b.addInstallLibFile(pkg_config_file.getOutput(), "pkgconfig/miniz.pc");
-        // }
-    }
-
-    // if(BUILD_NO_STDIO)
-    //   target_compile_definitions(${PROJECT_NAME} PRIVATE MINIZ_NO_STDIO)
-    // endif()
-
+    // If specifed, add definition to disable `stdio` usage.
     if (build_no_stdio) {
         mod.addCMacro("MINIZ_NO_STDIO", "");
     }
 
-    // if(INSTALL_PROJECT)
-    // install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Targets
-    //     RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR}
-    //     ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    //     LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    //     # users can use <miniz.h> or <miniz/miniz.h>
-    //     INCLUDES DESTINATION include ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}
-    // )
-
-    // include(CMakePackageConfigHelpers)
-    // write_basic_package_version_file(
-    //     "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}/${PROJECT_NAME}ConfigVersion.cmake"
-    //     VERSION ${MINIZ_VERSION}
-    //     COMPATIBILITY AnyNewerVersion
-    // )
-
-    // export(EXPORT ${PROJECT_NAME}Targets
-    //     FILE "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}/${PROJECT_NAME}Targets.cmake"
-    //     NAMESPACE ${PROJECT_NAME}::
-    // )
-    // configure_file(Config.cmake.in
-    //     "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}/${PROJECT_NAME}Config.cmake"
-    //     @ONLY
-    // )
-
-    // set(ConfigPackageLocation ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
-    // install(EXPORT ${PROJECT_NAME}Targets
-    //     FILE
-    //     ${PROJECT_NAME}Targets.cmake
-    //     NAMESPACE
-    //     ${PROJECT_NAME}::
-    //     DESTINATION
-    //     ${ConfigPackageLocation}
-    // )
-    // install(
-    //     FILES
-    //     "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}/${PROJECT_NAME}Config.cmake"
-    //     "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}/${PROJECT_NAME}ConfigVersion.cmake"
-    //     DESTINATION
-    //     ${ConfigPackageLocation}
-    //     COMPONENT
-    //     Devel
-    // )
-    // endif()
+    // -- Other Steps --
 
     // Create an unpack step to view the source code we are using.
     const unpack = b.step("unpack", "Installs the unpacked source");
@@ -376,6 +157,10 @@ pub fn build(b: *std.Build) !void {
         .install_dir = .{ .custom = "unpacked" },
         .install_subdir = "",
     }).step);
+
+    // Remove the `zig-out` folder.
+    const clean = b.step("clean", "Deletes the `zig-out` folder");
+    clean.dependOn(&b.addRemoveDirTree(b.path("zig-out")).step);
 }
 
 // Version
@@ -393,32 +178,10 @@ fn getVersion(allocator: std.mem.Allocator) std.SemanticVersion {
     unreachable;
 }
 
-// Helper Functions
-
-/// Must be called with anytype being a `[]const ?*<something with .step field>`.
-fn stepGroup(b: *std.Build, steps: anytype) *Step {
-    const step = b.step("group", "");
-    _ = b.top_level_steps.pop();
-
-    for (steps) |dopt| if (dopt) |d| {
-        step.dependOn(&d.step);
-    };
-
-    return step;
-}
-
 // Tools
 
-const LazyPathOrString = union(enum) {
-    lazy_path: LP,
-    string: []const u8,
-};
-
-const Amalgamated = struct {
-    step: *Step,
-    header_output: LP,
-    source_output: LP,
-};
+const LazyPathOrString = union(enum) { lazy_path: LP, string: []const u8 };
+const Amalgamated = struct { step: *Step, header_output: LP, source_output: LP };
 
 fn amalgamate(
     b: *std.Build,
@@ -492,3 +255,50 @@ fn fatalNoData(comptime format: []const u8) noreturn {
 
     std.process.exit(1);
 }
+
+// Constants
+
+const MINIZ_EXPORT_H =
+    \\ #ifndef MINIZ_EXPORT_H
+    \\ #define MINIZ_EXPORT_H
+    \\ 
+    \\ #ifdef MINIZ_STATIC_DEFINE
+    \\ #  define MINIZ_EXPORT
+    \\ #  define MINIZ_NO_EXPORT
+    \\ #else
+    \\ #  ifndef MINIZ_EXPORT
+    \\ #    ifdef miniz_EXPORTS
+    \\         /* We are building this library */
+    \\ #      define MINIZ_EXPORT
+    \\ #    else
+    \\         /* We are using this library */
+    \\ #      define MINIZ_EXPORT
+    \\ #    endif
+    \\ #  endif
+    \\ 
+    \\ #  ifndef MINIZ_NO_EXPORT
+    \\ #    define MINIZ_NO_EXPORT
+    \\ #  endif
+    \\ #endif
+    \\ 
+    \\ #ifndef MINIZ_DEPRECATED
+    \\ #  define MINIZ_DEPRECATED __attribute__ ((__deprecated__))
+    \\ #endif
+    \\ 
+    \\ #ifndef MINIZ_DEPRECATED_EXPORT
+    \\ #  define MINIZ_DEPRECATED_EXPORT MINIZ_EXPORT MINIZ_DEPRECATED
+    \\ #endif
+    \\ 
+    \\ #ifndef MINIZ_DEPRECATED_NO_EXPORT
+    \\ #  define MINIZ_DEPRECATED_NO_EXPORT MINIZ_NO_EXPORT MINIZ_DEPRECATED
+    \\ #endif
+    \\ 
+    \\ /* NOLINTNEXTLINE(readability-avoid-unconditional-preprocessor-if) */
+    \\ #if 0 /* DEFINE_NO_DEPRECATED */
+    \\ #  ifndef MINIZ_NO_DEPRECATED
+    \\ #    define MINIZ_NO_DEPRECATED
+    \\ #  endif
+    \\ #endif
+    \\ 
+    \\ #endif /* MINIZ_EXPORT_H */
+;
