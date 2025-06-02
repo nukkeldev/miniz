@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.14.1",
     .dependencies = .{
         .upstream = .{
-            .url = "git+https://github.com/richgel999/miniz?ref=master#c883286f1a6443720e7705450f59e579a4bbb8e2",
-            .hash = "N-V-__8AAINZFgB-AsYGrEPUAvCn1wwi-Tjyy8UNjHH3q33V",
+            .url = "git+https://github.com/richgel999/miniz?ref=3.0.2#293d4db1b7d0ffee9756d035b9ac6f7431ef8492",
+            .hash = "N-V-__8AAERZCACWezRV1bLpUKNG2scSJbJdweF1Id_3JKc7",
         },
     },
     .paths = .{
