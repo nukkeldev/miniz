@@ -20,6 +20,11 @@ const usage =
     \\
 ;
 
+const AmalgameeFlags = struct {
+    name: []const u8,
+    remove_includes: bool = true,
+};
+
 pub fn main() void {
     // Create an allocator.
 
@@ -29,7 +34,9 @@ pub fn main() void {
 
     // Create out program state.
 
+    var header_file_flags = std.ArrayList(AmalgameeFlags).init(allocator);
     var header_contents = std.ArrayList([]const u8).init(allocator);
+    var source_file_flags = std.ArrayList(AmalgameeFlags).init(allocator);
     var source_contents = std.ArrayList([]const u8).init(allocator);
     var header_output: ?[]const u8 = null;
     var source_output: ?[]const u8 = null;
@@ -40,7 +47,7 @@ pub fn main() void {
     var mode: enum { headers, sources, additionally } = undefined;
     var includes_to_remove = std.ArrayList([]const u8).init(allocator);
 
-    var args = std.process.argsWithAllocator(allocator) catch fatal("OOM", .{});
+    var args = std.process.argsWithAllocator(allocator) catch oom();
     _ = args.skip();
 
     var arg_n: usize = 0;
@@ -59,23 +66,33 @@ pub fn main() void {
             header_only = true;
         } else {
             if (mode == .additionally) {
-                includes_to_remove.append(arg) catch fatal("OOM", .{});
+                includes_to_remove.append(arg) catch oom();
                 continue;
             }
+
+            const string = arg[0] == '"' and arg[arg.len - 1] == '"';
             const contents = outer: {
-                if (arg[0] == '"' and arg[arg.len - 1] == '"') {
+                if (string) {
                     break :outer arg[1 .. arg.len - 1];
                 } else {
                     const file = std.fs.cwd().openFile(arg, .{}) catch fatal("Failed to open: \"{s}\"", .{arg});
                     defer file.close();
-                    includes_to_remove.append(std.fs.path.basename(arg)) catch fatal("OOM", .{});
-                    break :outer file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch fatal("OOM", .{});
+
+                    includes_to_remove.append(std.fs.path.basename(arg)) catch oom();
+                    break :outer file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch oom();
                 }
             };
+
             if (std.mem.trim(u8, contents, &std.ascii.whitespace).len == 0) continue;
+
+            (if (mode == .headers) header_file_flags else source_file_flags).append(.{
+                .name = if (string) "inline" else arg,
+                .remove_includes = !string,
+            }) catch oom();
+
             switch (mode) {
-                .headers => header_contents.append(contents) catch fatal("OOM", .{}),
-                .sources => source_contents.append(contents) catch fatal("OOM", .{}),
+                .headers => header_contents.append(contents) catch oom(),
+                .sources => source_contents.append(contents) catch oom(),
                 else => unreachable,
             }
         }
@@ -94,12 +111,13 @@ pub fn main() void {
 
     const amal_header_contents: []const u8, const amal_source_contents: []const u8 = outer: {
         if (header_only) {
-            header_contents.appendSlice(source_contents.items) catch fatal("OOM", .{});
-            break :outer .{ amalgamate(allocator, header_contents.items, includes_to_remove.items), undefined };
+            header_contents.appendSlice(source_contents.items) catch oom();
+            header_file_flags.appendSlice(source_file_flags.items) catch oom();
+            break :outer .{ amalgamate(allocator, header_contents.items, header_file_flags.items, includes_to_remove.items), undefined };
         } else {
             break :outer .{
-                amalgamate(allocator, header_contents.items, includes_to_remove.items),
-                amalgamate(allocator, source_contents.items, includes_to_remove.items),
+                amalgamate(allocator, header_contents.items, header_file_flags.items, includes_to_remove.items),
+                amalgamate(allocator, source_contents.items, source_file_flags.items, includes_to_remove.items),
             };
         }
     };
@@ -112,31 +130,45 @@ pub fn main() void {
     return std.process.cleanExit();
 }
 
-fn amalgamate(allocator: std.mem.Allocator, file_contents: [][]const u8, includes_to_remove: [][]const u8) []const u8 {
+fn amalgamate(
+    allocator: std.mem.Allocator,
+    file_contents: []const []const u8,
+    file_flags: []const AmalgameeFlags,
+    includes_to_remove: []const []const u8,
+) []const u8 {
     var amal_contents = std.ArrayList(u8).init(allocator);
-    for (file_contents) |contents| {
-        amal_contents.appendSlice("\n// -- START AMALGAMATED -- //\n\n") catch fatal("OOM", .{});
+    for (file_contents, 0..) |contents, i| {
+        const flags = file_flags[i];
 
-        amal_contents.ensureUnusedCapacity(contents.len + 1) catch fatal("OOM", .{});
+        // TODO: Replace with .count -> .ensureUnusedCapacity ->
+        // TODO:                        .appendSliceAssumeCapacity
+        amal_contents.appendSlice(
+            std.fmt.allocPrint(allocator, "\n// -- [Start] {s} -- //\n\n", .{flags.name}) catch oom(),
+        ) catch oom();
+
+        amal_contents.ensureUnusedCapacity(contents.len + 1) catch oom();
         var lines = std.mem.splitScalar(u8, std.mem.trim(u8, contents, &std.ascii.whitespace), '\n');
         outer: while (lines.next()) |line| {
             const trimmed_line = std.mem.trim(u8, line, &std.ascii.whitespace);
-            if (std.mem.startsWith(u8, trimmed_line, "#include \"") and
+            if (flags.remove_includes and
+                std.mem.startsWith(u8, trimmed_line, "#include \"") and
                 trimmed_line[trimmed_line.len - 1] == '"')
             {
                 const include = trimmed_line[("#include \"".len)..(trimmed_line.len - 1)];
                 for (includes_to_remove) |remove| if (std.mem.eql(u8, remove, include)) {
-                    amal_contents.appendSlice("// [AMALGAMATED] ") catch fatal("OOM", .{});
-                    amal_contents.appendSlice(line) catch fatal("OOM", .{});
-                    amal_contents.append('\n') catch fatal("OOM", .{});
+                    amal_contents.appendSlice("// [AMALGAMATED] ") catch oom();
+                    amal_contents.appendSlice(line) catch oom();
+                    amal_contents.append('\n') catch oom();
                     continue :outer;
                 };
             }
-            amal_contents.appendSlice(line) catch fatal("OOM", .{});
-            amal_contents.append('\n') catch fatal("OOM", .{});
+            amal_contents.appendSlice(line) catch oom();
+            amal_contents.append('\n') catch oom();
         }
 
-        amal_contents.appendSlice("\n// -- END AMALGAMATED -- //\n") catch fatal("OOM", .{});
+        amal_contents.appendSlice(
+            std.fmt.allocPrint(allocator, "\n// -- [End] {s} -- //\n\n", .{flags.name}) catch oom(),
+        ) catch oom();
     }
     return std.mem.trim(u8, amal_contents.items, &std.ascii.whitespace);
 }
@@ -157,6 +189,10 @@ fn writeToOutput(output_path: ?[]const u8, contents: []const u8, context: []cons
 fn fatal(comptime format: []const u8, args: anytype) noreturn {
     std.debug.print(format, args);
     std.process.exit(1);
+}
+
+fn oom() noreturn {
+    fatal("Out-Of-Memory", .{});
 }
 
 fn fatalWithUsage(comptime format: []const u8, args: anytype) noreturn {
