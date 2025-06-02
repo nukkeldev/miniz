@@ -8,9 +8,10 @@ Add to `build.zig.zon` with:
 ```
 zig fetch --save git+https://github.com/nukkeldev/miniz
 ```
-Optionally suffix the url with `#<tag>` to use a tagged release:
+Optionally suffix the url with `#<ref>` to use a commit with a tag or a branch:
 ```
 zig fetch --save git+https://github.com/nukkeldev/miniz#3.0.2
+zig fetch --save git+https://github.com/nukkeldev/miniz#main
 ```
 
 ## TODO
