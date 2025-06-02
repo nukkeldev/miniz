@@ -31,11 +31,12 @@
 const std = @import("std");
 
 const Step = std.Build.Step;
+const LP = std.Build.LazyPath;
 
 var target: std.Build.ResolvedTarget = undefined;
 
-var upstream: std.Build.LazyPath = undefined;
-var lupstream: std.Build.LazyPath = undefined;
+var upstream: LP = undefined;
+var lupstream: LP = undefined;
 
 // TODO: Remove `try`s for panics.
 pub fn build(b: *std.Build) !void {
@@ -104,18 +105,18 @@ pub fn build(b: *std.Build) !void {
     // NOTE: `-DBUILD_SHARED_LIBS` has been replaced with `-Dlinkage`, but the
     // NOTE: original option is still kept for purity-sake with less priority
     // NOTE: than `-Dlinkage`.
-    const linkage = b: {
-        var linkage = b.option(std.builtin.LinkMode, "linkage", "How to build miniz");
-        if (linkage == null) {
-            const build_shared_libs = b.option(
-                bool,
-                "BUILD_SHARED_LIBS",
-                "Build shared library instead of static (prefer `-Dlinkage`)",
-            );
-            linkage = if (build_shared_libs orelse false) .dynamic else .static;
-        }
-        break :b linkage orelse unreachable;
-    };
+    // const linkage = b: {
+    //     var linkage = b.option(std.builtin.LinkMode, "linkage", "How to build miniz");
+    //     if (linkage == null) {
+    //         const build_shared_libs = b.option(
+    //             bool,
+    //             "BUILD_SHARED_LIBS",
+    //             "Build shared library instead of static (prefer `-Dlinkage`)",
+    //         );
+    //         linkage = if (build_shared_libs orelse false) .dynamic else .static;
+    //     }
+    //     break :b linkage orelse unreachable;
+    // };
 
     const build_no_stdio = b.option(bool, "BUILD_NO_STDIO", "Build a without stdio version") orelse false;
     // const build_tests = b.option(bool, "BUILD_TESTS", "Build tests") orelse false;
@@ -134,12 +135,13 @@ pub fn build(b: *std.Build) !void {
     // Create a locally cached copy of the project before we start generating
     // files.
 
-    const wf_lupstream_step = outer: {
+    {
         const step = b.addWriteFiles();
         step.step.name = "copy upstream";
+        if (b.verbose) b.getInstallStep().dependOn(&LogWriteFilesStep.init(b, step).step);
+
         lupstream = step.addCopyDirectory(upstream, "", .{});
-        break :outer if (b.verbose) &LogWriteFilesStep.init(b, step).step else &step.step;
-    };
+    }
 
     // [up1] amalgamate /ə-măl′gə-māt″/: intransitive verb
     //         To combine into a unified or integrated whole; unite.
@@ -189,7 +191,7 @@ pub fn build(b: *std.Build) !void {
         // `Step.WriteFile` makes intermediate directories so we don't need to
         // create `amalgamation/` nor copy `miniz.h`.
 
-        const amalgamate_step = amalgamate(
+        const amalgamated = amalgamate(
             b,
             &.{
                 .{ .string = "#ifndef MINIZ_EXPORT\n#define MINIZ_EXPORT\n#endif\n" },
@@ -212,19 +214,31 @@ pub fn build(b: *std.Build) !void {
             },
             build_header_only,
         );
-        amalgamate_step.dependOn(wf_lupstream_step);
-        b.getInstallStep().dependOn(amalgamate_step);
+
+        // Copy the files.
+
+        if (install_project) {
+            b.getInstallStep().dependOn(
+                &b.addInstallFile(amalgamated.header_output, "out/amalgamation/miniz.h").step,
+            );
+            b.getInstallStep().dependOn(
+                &b.addInstallFile(amalgamated.header_output, "out/miniz.h").step,
+            );
+            if (!build_header_only) b.getInstallStep().dependOn(
+                &b.addInstallFile(amalgamated.source_output, "out/amalgamation/miniz.c").step,
+            );
+        }
 
         // Create our library.
 
-        const lib = b.addLibrary(.{
-            .name = "miniz",
-            .root_module = mod,
-            .version = miniz_version,
-            .linkage = linkage,
-        });
+        // const lib = b.addLibrary(.{
+        //     .name = "miniz",
+        //     .root_module = mod,
+        //     .version = miniz_version,
+        //     .linkage = linkage,
+        // });
         // lib.addIncludePath(lupstream.path(b, "amalgamation"));
-        if (install_project) b.installArtifact(lib);
+        // if (install_project) b.installArtifact(lib);
 
         if (build_header_only) {
             // [up1] Embed miniz.c if we're only building a header.
@@ -477,8 +491,14 @@ fn getVersion(allocator: std.mem.Allocator) std.SemanticVersion {
 // Tools
 
 const LazyPathOrString = union(enum) {
-    lazy_path: std.Build.LazyPath,
+    lazy_path: LP,
     string: []const u8,
+};
+
+const Amalgamated = struct {
+    step: *Step,
+    header_output: LP,
+    source_output: LP,
 };
 
 fn amalgamate(
@@ -487,7 +507,7 @@ fn amalgamate(
     sources: []const LazyPathOrString,
     additional_includes: []const []const u8,
     header_only: bool,
-) *Step {
+) Amalgamated {
     const mod = b.createModule(.{
         .target = target,
         .optimize = .ReleaseFast,
@@ -514,12 +534,18 @@ fn amalgamate(
     run.addArgs(additional_includes);
 
     run.addArg("--header-output");
-    run.addFileArg(b.path(".zig-cache/generated/miniz/miniz.h"));
+    const header_output = b.path(".zig-cache/generated/miniz/miniz.h");
+    run.addFileArg(header_output);
 
     run.addArg("--source-output");
-    run.addFileArg(b.path(".zig-cache/generated/miniz/miniz.c"));
+    const source_output = b.path(".zig-cache/generated/miniz/miniz.c");
+    run.addFileArg(source_output);
 
-    return &run.step;
+    return .{
+        .step = &run.step,
+        .header_output = header_output,
+        .source_output = source_output,
+    };
 }
 
 // Build-Time Logging
