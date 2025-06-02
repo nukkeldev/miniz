@@ -72,6 +72,7 @@ pub fn main() void {
                     break :outer file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch fatal("OOM", .{});
                 }
             };
+            if (std.mem.trim(u8, contents, &std.ascii.whitespace).len == 0) continue;
             switch (mode) {
                 .headers => header_contents.append(contents) catch fatal("OOM", .{}),
                 .sources => source_contents.append(contents) catch fatal("OOM", .{}),
@@ -114,10 +115,10 @@ pub fn main() void {
 fn amalgamate(allocator: std.mem.Allocator, file_contents: [][]const u8, includes_to_remove: [][]const u8) []const u8 {
     var amal_contents = std.ArrayList(u8).init(allocator);
     for (file_contents) |contents| {
-        amal_contents.appendSlice("\n\n// -- START AMALGAMATED -- //\n\n") catch fatal("OOM", .{});
+        amal_contents.appendSlice("\n// -- START AMALGAMATED -- //\n\n") catch fatal("OOM", .{});
 
         amal_contents.ensureUnusedCapacity(contents.len + 1) catch fatal("OOM", .{});
-        var lines = std.mem.splitScalar(u8, contents, '\n');
+        var lines = std.mem.splitScalar(u8, std.mem.trim(u8, contents, &std.ascii.whitespace), '\n');
         outer: while (lines.next()) |line| {
             const trimmed_line = std.mem.trim(u8, line, &std.ascii.whitespace);
             if (std.mem.startsWith(u8, trimmed_line, "#include \"") and
@@ -135,9 +136,9 @@ fn amalgamate(allocator: std.mem.Allocator, file_contents: [][]const u8, include
             amal_contents.append('\n') catch fatal("OOM", .{});
         }
 
-        amal_contents.appendSlice("\n\n// -- END AMALGAMATED -- //\n\n") catch fatal("OOM", .{});
+        amal_contents.appendSlice("\n// -- END AMALGAMATED -- //\n") catch fatal("OOM", .{});
     }
-    return amal_contents.items;
+    return std.mem.trim(u8, amal_contents.items, &std.ascii.whitespace);
 }
 
 fn writeToOutput(output_path: ?[]const u8, contents: []const u8, context: []const u8) void {
