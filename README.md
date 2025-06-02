@@ -14,6 +14,11 @@ zig fetch --save git+https://github.com/nukkeldev/miniz#3.0.2
 zig fetch --save git+https://github.com/nukkeldev/miniz#main
 ```
 
+### Versions
+
+- `master`/`main`
+- `3.0.2`
+
 ## TODO
 
 - Tagged Releases
