@@ -21,6 +21,5 @@ zig fetch --save git+https://github.com/nukkeldev/miniz#main
 
 ## TODO
 
-- Tagged Releases
 - Examples
 - Tests
