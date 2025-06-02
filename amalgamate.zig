@@ -62,7 +62,7 @@ pub fn main() void {
             header_output = args.next() orelse fatalWithUsage("-hO and --header-output require a path after it.", .{});
         } else if (std.mem.eql(u8, arg, "-sO") or std.mem.eql(u8, arg, "--source-output")) {
             source_output = args.next() orelse fatalWithUsage("-sO and --source-output require a path after it.", .{});
-        } else if (std.mem.eql(u8, arg, "-H")) {
+        } else if (std.mem.eql(u8, arg, "-H") or std.mem.eql(u8, arg, "--header-only")) {
             header_only = true;
         } else {
             if (mode == .additionally) {
