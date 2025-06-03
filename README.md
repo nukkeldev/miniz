@@ -1,4 +1,5 @@
 # miniz
+[![CI](https://github.com/nukkeldev/miniz/actions/workflows/ci.yaml/badge.svg)](https://github.com/nukkeldev/miniz/actions/workflows/ci.yaml)
 
 [miniz](https://github.com/richgel999/miniz) built with [Zig](https://ziglang.org/).
 
